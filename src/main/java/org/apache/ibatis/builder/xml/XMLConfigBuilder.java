@@ -379,6 +379,11 @@ public class XMLConfigBuilder extends BaseBuilder {
     }
   }
 
+  /**
+   * Configuration的属性MapperRegistry对象又一个Map<Class<?>, MapperProxyFactory<?>>的map
+   * 所以在向MapperRegistry中添加mapper对象是，key是mapper对应的类对象，而value则为对应类对象的代理对象
+   * 这就是为什么mybatis查询的时候都是mapper的代理对象在执行查询操作
+   */
   private void mapperElement(XNode parent) throws Exception {
     if (parent != null) {
       //1.遍历mapper节点下的所有子节点
