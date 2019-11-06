@@ -15,11 +15,6 @@
  */
 package org.apache.ibatis.builder.xml;
 
-import java.io.InputStream;
-import java.io.Reader;
-import java.util.Properties;
-import javax.sql.DataSource;
-
 import org.apache.ibatis.builder.BaseBuilder;
 import org.apache.ibatis.builder.BuilderException;
 import org.apache.ibatis.datasource.DataSourceFactory;
@@ -38,13 +33,14 @@ import org.apache.ibatis.reflection.MetaClass;
 import org.apache.ibatis.reflection.ReflectorFactory;
 import org.apache.ibatis.reflection.factory.ObjectFactory;
 import org.apache.ibatis.reflection.wrapper.ObjectWrapperFactory;
-import org.apache.ibatis.session.AutoMappingBehavior;
-import org.apache.ibatis.session.AutoMappingUnknownColumnBehavior;
-import org.apache.ibatis.session.Configuration;
-import org.apache.ibatis.session.ExecutorType;
-import org.apache.ibatis.session.LocalCacheScope;
+import org.apache.ibatis.session.*;
 import org.apache.ibatis.transaction.TransactionFactory;
 import org.apache.ibatis.type.JdbcType;
+
+import javax.sql.DataSource;
+import java.io.InputStream;
+import java.io.Reader;
+import java.util.Properties;
 
 /**
  * @author Clinton Begin
@@ -91,10 +87,13 @@ public class XMLConfigBuilder extends BaseBuilder {
   }
 
   public Configuration parse() {
+    //1.如果已经被解析过，抛出异常
     if (parsed) {
       throw new BuilderException("Each XMLConfigBuilder can only be used once.");
     }
+    //2.标记已经被解析过
     parsed = true;
+    //3.解析mybatis-config.xml的configuration节点
     parseConfiguration(parser.evalNode("/configuration"));
     return configuration;
   }
@@ -102,20 +101,32 @@ public class XMLConfigBuilder extends BaseBuilder {
   private void parseConfiguration(XNode root) {
     try {
       //issue #117 read properties first
+      //1.解析properties节点
       propertiesElement(root.evalNode("properties"));
+      //2.解析setting节点
       Properties settings = settingsAsProperties(root.evalNode("settings"));
       loadCustomVfs(settings);
       loadCustomLogImpl(settings);
+      //3.解析typeAliases节点，实体类
       typeAliasesElement(root.evalNode("typeAliases"));
+      //4.解析plugin节点
       pluginElement(root.evalNode("plugins"));
+      //5.解析objectFactory节点
       objectFactoryElement(root.evalNode("objectFactory"));
+      //6.解析objectWrapperFactory节点
       objectWrapperFactoryElement(root.evalNode("objectWrapperFactory"));
+      //7.解析reflectorFactory节点
       reflectorFactoryElement(root.evalNode("reflectorFactory"));
+      //8.将setting属性填充到configutation对象中
       settingsElement(settings);
       // read it after objectFactory and objectWrapperFactory issue #631
+      //9.解析envirmonents节点(环境信息)
       environmentsElement(root.evalNode("environments"));
+      //10.解析databaseIdProvides节点
       databaseIdProviderElement(root.evalNode("databaseIdProvider"));
+      //11.解析typeHandler节点，解析自定义类型处理器typeHandler
       typeHandlerElement(root.evalNode("typeHandlers"));
+      //12.解析mapper节点(重点)
       mapperElement(root.evalNode("mappers"));
     } catch (Exception e) {
       throw new BuilderException("Error parsing SQL Mapper Configuration. Cause: " + e, e);
@@ -156,16 +167,26 @@ public class XMLConfigBuilder extends BaseBuilder {
     configuration.setLogImpl(logImpl);
   }
 
+  /**
+   * 作用：为了解析configuration中的typeAlias节点，即所有的实体类信息
+   * 1.子节点是package的，则注册该路径下的包下的所有实体类信息
+   * 2.子节点是类的名称或者类的路径，直接解析该类；
+   * 3.两种方式最终都会注册实体类信息，其根本是TypeAliasRegistry的全局属性Map<String, Class<?>> typeAliases = new HashMap<>()；
+   * 每一个注册的实体类都会被put进Map里，key为全小写类名，value为类对象；
+   */
   private void typeAliasesElement(XNode parent) {
     if (parent != null) {
+      //1.遍历扫面子节点
       for (XNode child : parent.getChildren()) {
         if ("package".equals(child.getName())) {
+          //1.1如果扫面的是包，就注册该路径下所有的类
           String typeAliasPackage = child.getStringAttribute("name");
           configuration.getTypeAliasRegistry().registerAliases(typeAliasPackage);
         } else {
           String alias = child.getStringAttribute("alias");
           String type = child.getStringAttribute("type");
           try {
+            //1.2通过类的路径地址获取类的对象；
             Class<?> clazz = Resources.classForName(type);
             if (alias == null) {
               typeAliasRegistry.registerAlias(clazz);
@@ -241,6 +262,7 @@ public class XMLConfigBuilder extends BaseBuilder {
   }
 
   private void settingsElement(Properties props) {
+    //1.解析setting中的信息，如果没有值取默认的值；
     configuration.setAutoMappingBehavior(AutoMappingBehavior.valueOf(props.getProperty("autoMappingBehavior", "PARTIAL")));
     configuration.setAutoMappingUnknownColumnBehavior(AutoMappingUnknownColumnBehavior.valueOf(props.getProperty("autoMappingUnknownColumnBehavior", "NONE")));
     configuration.setCacheEnabled(booleanValueOf(props.getProperty("cacheEnabled"), true));
@@ -359,26 +381,34 @@ public class XMLConfigBuilder extends BaseBuilder {
 
   private void mapperElement(XNode parent) throws Exception {
     if (parent != null) {
+      //1.遍历mapper节点下的所有子节点
       for (XNode child : parent.getChildren()) {
+        //1.1如果是package属性，扫面该路径下所有的包；
         if ("package".equals(child.getName())) {
           String mapperPackage = child.getStringAttribute("name");
+          //1.2直接向Configuration对象的mapperRegistry属性中添加该路径包下所有的mapper接口信息
           configuration.addMappers(mapperPackage);
         } else {
+          //1.2不是package属性的情况
           String resource = child.getStringAttribute("resource");
           String url = child.getStringAttribute("url");
           String mapperClass = child.getStringAttribute("class");
           if (resource != null && url == null && mapperClass == null) {
+            //1.2.1resource不为null的情况
             ErrorContext.instance().resource(resource);
             InputStream inputStream = Resources.getResourceAsStream(resource);
             XMLMapperBuilder mapperParser = new XMLMapperBuilder(inputStream, configuration, resource, configuration.getSqlFragments());
             mapperParser.parse();
           } else if (resource == null && url != null && mapperClass == null) {
+            //1.2.2url不为Null的情况
             ErrorContext.instance().resource(url);
             InputStream inputStream = Resources.getUrlAsStream(url);
             XMLMapperBuilder mapperParser = new XMLMapperBuilder(inputStream, configuration, url, configuration.getSqlFragments());
             mapperParser.parse();
           } else if (resource == null && url == null && mapperClass != null) {
+            //1.2.3mapperClass不为null的情况，这种情况下下直接注册该类
             Class<?> mapperInterface = Resources.classForName(mapperClass);
+            //1.2.4直接向Configuration对象的mapperRegistry属性中添加mapper接口信息
             configuration.addMapper(mapperInterface);
           } else {
             throw new BuilderException("A mapper element may only specify a url, resource or class, but not more than one.");

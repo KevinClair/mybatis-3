@@ -15,38 +15,21 @@
  */
 package org.apache.ibatis.builder.xml;
 
-import java.io.InputStream;
-import java.io.Reader;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
-
-import org.apache.ibatis.builder.BaseBuilder;
-import org.apache.ibatis.builder.BuilderException;
-import org.apache.ibatis.builder.CacheRefResolver;
-import org.apache.ibatis.builder.IncompleteElementException;
-import org.apache.ibatis.builder.MapperBuilderAssistant;
-import org.apache.ibatis.builder.ResultMapResolver;
+import org.apache.ibatis.builder.*;
 import org.apache.ibatis.cache.Cache;
 import org.apache.ibatis.executor.ErrorContext;
 import org.apache.ibatis.io.Resources;
-import org.apache.ibatis.mapping.Discriminator;
-import org.apache.ibatis.mapping.ParameterMapping;
-import org.apache.ibatis.mapping.ParameterMode;
-import org.apache.ibatis.mapping.ResultFlag;
-import org.apache.ibatis.mapping.ResultMap;
-import org.apache.ibatis.mapping.ResultMapping;
+import org.apache.ibatis.mapping.*;
 import org.apache.ibatis.parsing.XNode;
 import org.apache.ibatis.parsing.XPathParser;
 import org.apache.ibatis.reflection.MetaClass;
 import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.type.JdbcType;
 import org.apache.ibatis.type.TypeHandler;
+
+import java.io.InputStream;
+import java.io.Reader;
+import java.util.*;
 
 /**
  * @author Clinton Begin
@@ -91,13 +74,19 @@ public class XMLMapperBuilder extends BaseBuilder {
 
   public void parse() {
     if (!configuration.isResourceLoaded(resource)) {
+      //1.解析mapper节点
       configurationElement(parser.evalNode("/mapper"));
+      //2.将mapper文件添加到configuration.loadedResources中
       configuration.addLoadedResource(resource);
+      //3.绑定mapper和namespace的关系，方法中做了数据补全，即如果当前的mapper并没有在Configuration的MapperRegistry中，
+      // 也会重新在mapperRegistry中添加，并且添加到configuration.loadedResources
       bindMapperForNamespace();
     }
-
+    //4.处理解析失败的ResultMap节点
     parsePendingResultMaps();
+    //5.处理解析失败的CacheRef节点
     parsePendingCacheRefs();
+    //3.处理解析失败的Sql语句节点
     parsePendingStatements();
   }
 
@@ -105,18 +94,34 @@ public class XMLMapperBuilder extends BaseBuilder {
     return sqlFragments.get(refid);
   }
 
+  /**
+   * 作用：解析一个Mapper中所有节点的信息
+   * 1.设置了类的namespace属性(全局唯一)；
+   * 2.解析文件中每一个resultMap对象信息
+   * 3.解析了每一个sql标签
+   * 4.解析了每一个select|insert|update|delete标签
+   *
+   */
   private void configurationElement(XNode context) {
     try {
+      //1.获取namespace信息，为空是抛出异常
       String namespace = context.getStringAttribute("namespace");
       if (namespace == null || namespace.equals("")) {
         throw new BuilderException("Mapper's namespace cannot be empty");
       }
+      //2.设置当前的namespace属性
       builderAssistant.setCurrentNamespace(namespace);
+      //3.解析cache-ref节点
       cacheRefElement(context.evalNode("cache-ref"));
+      //4.解析cache节点
       cacheElement(context.evalNode("cache"));
+      //5.解析所有的parameterMap节点(先阶段已经不大推荐使用的写法，目前大部分都是以paramerType)
       parameterMapElement(context.evalNodes("/mapper/parameterMap"));
+      //6.解析resultMap节点
       resultMapElements(context.evalNodes("/mapper/resultMap"));
+      //7.解析sql节点
       sqlElement(context.evalNodes("/mapper/sql"));
+      //8.解析select|insert|update|delete节点
       buildStatementFromContext(context.evalNodes("select|insert|update|delete"));
     } catch (Exception e) {
       throw new BuilderException("Error parsing Mapper XML. The XML location is '" + resource + "'. Cause: " + e, e);
@@ -134,6 +139,7 @@ public class XMLMapperBuilder extends BaseBuilder {
     for (XNode context : list) {
       final XMLStatementBuilder statementParser = new XMLStatementBuilder(configuration, builderAssistant, context, requiredDatabaseId);
       try {
+        //1.解析select|insert|update|delete标签节点
         statementParser.parseStatementNode();
       } catch (IncompleteElementException e) {
         configuration.addIncompleteStatement(statementParser);
@@ -240,6 +246,7 @@ public class XMLMapperBuilder extends BaseBuilder {
   }
 
   private void resultMapElements(List<XNode> list) throws Exception {
+    //1.遍历所有的resultMap节点
     for (XNode resultMapNode : list) {
       try {
         resultMapElement(resultMapNode);
@@ -253,12 +260,23 @@ public class XMLMapperBuilder extends BaseBuilder {
     return resultMapElement(resultMapNode, Collections.emptyList(), null);
   }
 
+  /**
+   * 解析resultMap节点
+   *
+   */
   private ResultMap resultMapElement(XNode resultMapNode, List<ResultMapping> additionalResultMappings, Class<?> enclosingType) throws Exception {
     ErrorContext.instance().activity("processing " + resultMapNode.getValueBasedIdentifier());
+    //1.获取resultMap节点的type属性，即对应的实体类路径
     String type = resultMapNode.getStringAttribute("type",
         resultMapNode.getStringAttribute("ofType",
             resultMapNode.getStringAttribute("resultType",
                 resultMapNode.getStringAttribute("javaType"))));
+    //2.获取类对象
+    /**
+     * 重点：此处通过类路径获取到了类的对象，有两种方式
+     * 1.通过全类名小写的key从TypeAliasRegistry的typeAliases属性中获取类对象；(typeAliases为之前从typeAlias标签中解析)
+     * 2.如果第一种方式未找到，就直接通过类型反射出类对象；(这也是为什么resultMap标签中的type属性的类，不一定要typeAlias包含的原因)
+     */
     Class<?> typeClass = resolveClass(type);
     if (typeClass == null) {
       typeClass = inheritEnclosingType(resultMapNode, enclosingType);
@@ -267,25 +285,34 @@ public class XMLMapperBuilder extends BaseBuilder {
     List<ResultMapping> resultMappings = new ArrayList<>();
     resultMappings.addAll(additionalResultMappings);
     List<XNode> resultChildren = resultMapNode.getChildren();
+    //3.遍历resultMap的子节点，没有太大的区别，最终都是在reaultMappings集合中添加ResultMapping对象(每一个resultMap标签都是一个resultMapping对象)
     for (XNode resultChild : resultChildren) {
       if ("constructor".equals(resultChild.getName())) {
+        //3.1constructor节点
         processConstructorElement(resultChild, typeClass, resultMappings);
       } else if ("discriminator".equals(resultChild.getName())) {
+        //3.2discriminator节点
         discriminator = processDiscriminatorElement(resultChild, typeClass, resultMappings);
       } else {
+        //3.3其他情况
         List<ResultFlag> flags = new ArrayList<>();
+        //3.4如果是id属性
         if ("id".equals(resultChild.getName())) {
           flags.add(ResultFlag.ID);
         }
         resultMappings.add(buildResultMappingFromContext(resultChild, typeClass, flags));
       }
     }
+    //4.获取resultMap的id属性
     String id = resultMapNode.getStringAttribute("id",
             resultMapNode.getValueBasedIdentifier());
+    //5.获取extend属性
     String extend = resultMapNode.getStringAttribute("extends");
+    //6.获取autoMapping属性
     Boolean autoMapping = resultMapNode.getBooleanAttribute("autoMapping");
     ResultMapResolver resultMapResolver = new ResultMapResolver(builderAssistant, id, typeClass, extend, discriminator, resultMappings, autoMapping);
     try {
+      //7.向ResultMapResolver对象的MapperBuilderAssistant中add该resultMap标签
       return resultMapResolver.resolve();
     } catch (IncompleteElementException  e) {
       configuration.addIncompleteResultMap(resultMapResolver);
@@ -343,11 +370,21 @@ public class XMLMapperBuilder extends BaseBuilder {
   }
 
   private void sqlElement(List<XNode> list, String requiredDatabaseId) {
+    //1.循环解析每一个sql标签
     for (XNode context : list) {
+      //1.1获取databaseId属性
       String databaseId = context.getStringAttribute("databaseId");
+      //1.2获取id属性
       String id = context.getStringAttribute("id");
+      //1.3将sql的id和namespace绑定在一起，例如com.example.test.mapper.UserInfosMapper.Example_Where_Clause
       id = builderAssistant.applyCurrentNamespace(id, false);
       if (databaseIdMatchesCurrent(id, databaseId, requiredDatabaseId)) {
+        //1.4将sql的id属性放入sqlFragments属性中，key为之前的组合id
+        /**
+         * For example: namespace是com.example.test.mapper.UserInfosMapper下的一个id为Example_Where_Clause的sql标签为
+         * <sql id="Example_Where_Clause">id,name,password</sql>
+         *  sqlFragments.put("com.example.test.mapper.UserInfosMapper.Example_Where_Clause", context);
+         */
         sqlFragments.put(id, context);
       }
     }
