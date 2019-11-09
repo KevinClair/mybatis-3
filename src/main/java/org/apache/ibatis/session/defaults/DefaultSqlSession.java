@@ -15,15 +15,6 @@
  */
 package org.apache.ibatis.session.defaults;
 
-import java.io.IOException;
-import java.sql.Connection;
-import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
 import org.apache.ibatis.binding.BindingException;
 import org.apache.ibatis.cursor.Cursor;
 import org.apache.ibatis.exceptions.ExceptionFactory;
@@ -38,6 +29,11 @@ import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.session.ResultHandler;
 import org.apache.ibatis.session.RowBounds;
 import org.apache.ibatis.session.SqlSession;
+
+import java.io.IOException;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.util.*;
 
 /**
  * The default implementation for {@link SqlSession}.
@@ -73,8 +69,10 @@ public class DefaultSqlSession implements SqlSession {
   @Override
   public <T> T selectOne(String statement, Object parameter) {
     // Popular vote was to return null on 0 results and throw exception on too many.
+    //1.执行
     List<T> list = this.selectList(statement, parameter);
     if (list.size() == 1) {
+      //2.获取集合中的第一个值
       return list.get(0);
     } else if (list.size() > 1) {
       throw new TooManyResultsException("Expected one result (or null) to be returned by selectOne(), but found: " + list.size());
@@ -143,7 +141,9 @@ public class DefaultSqlSession implements SqlSession {
   @Override
   public <E> List<E> selectList(String statement, Object parameter, RowBounds rowBounds) {
     try {
+      //1.获取MapperStateMent对象
       MappedStatement ms = configuration.getMappedStatement(statement);
+      //2.executor执行器执行查询
       return executor.query(ms, wrapCollection(parameter), rowBounds, Executor.NO_RESULT_HANDLER);
     } catch (Exception e) {
       throw ExceptionFactory.wrapException("Error querying database.  Cause: " + e, e);
@@ -287,6 +287,7 @@ public class DefaultSqlSession implements SqlSession {
   }
 
   @Override
+  //获取Mapper的代理对象
   public <T> T getMapper(Class<T> type) {
     return configuration.getMapper(type, this);
   }

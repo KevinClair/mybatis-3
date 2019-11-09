@@ -34,6 +34,9 @@ public class DynamicSqlSource implements SqlSource {
   }
 
   @Override
+  /**
+   * 动态解析Sql语句
+   */
   public BoundSql getBoundSql(Object parameterObject) {
     DynamicContext context = new DynamicContext(configuration, parameterObject);
     rootSqlNode.apply(context);

@@ -15,15 +15,6 @@
  */
 package org.apache.ibatis.binding;
 
-import java.lang.reflect.Array;
-import java.lang.reflect.Method;
-import java.lang.reflect.ParameterizedType;
-import java.lang.reflect.Type;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-
 import org.apache.ibatis.annotations.Flush;
 import org.apache.ibatis.annotations.MapKey;
 import org.apache.ibatis.cursor.Cursor;
@@ -38,6 +29,15 @@ import org.apache.ibatis.session.ResultHandler;
 import org.apache.ibatis.session.RowBounds;
 import org.apache.ibatis.session.SqlSession;
 
+import java.lang.reflect.Array;
+import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
 /**
  * @author Clinton Begin
  * @author Eduardo Macarron
@@ -50,41 +50,69 @@ public class MapperMethod {
   private final MethodSignature method;
 
   public MapperMethod(Class<?> mapperInterface, Method method, Configuration config) {
+    //1.初始化SqlCommmand
     this.command = new SqlCommand(config, mapperInterface, method);
+    //2.初始化MethodSignature
     this.method = new MethodSignature(config, mapperInterface, method);
   }
 
+  /**
+   * sql执行的流程
+   * @param sqlSession
+   * @param args
+   * @return
+   */
   public Object execute(SqlSession sqlSession, Object[] args) {
+    //1.初始化结果集
     Object result;
+    //2.判断当前的sql语句的执行流程
     switch (command.getType()) {
+      //2.1插入
       case INSERT: {
         Object param = method.convertArgsToSqlCommandParam(args);
         result = rowCountResult(sqlSession.insert(command.getName(), param));
         break;
       }
+      //2.2更新
       case UPDATE: {
         Object param = method.convertArgsToSqlCommandParam(args);
         result = rowCountResult(sqlSession.update(command.getName(), param));
         break;
       }
+      //2.3删除
       case DELETE: {
         Object param = method.convertArgsToSqlCommandParam(args);
         result = rowCountResult(sqlSession.delete(command.getName(), param));
         break;
       }
+      //2.4查询
       case SELECT:
+        //2.4.1如果查询的返回值是void，但参数列表中包含 ResultHandler，表明使用者想通过 ResultHandler 的方式获取查询结果，而非通过返回值获取结果
         if (method.returnsVoid() && method.hasResultHandler()) {
           executeWithResultHandler(sqlSession, args);
           result = null;
+          //2.4.2如果查询的返回值是多个
         } else if (method.returnsMany()) {
           result = executeForMany(sqlSession, args);
+          //2.4.3如果查询的返回值是Map
         } else if (method.returnsMap()) {
           result = executeForMap(sqlSession, args);
+          //2.4.4如果查询的返回值是游标
         } else if (method.returnsCursor()) {
           result = executeForCursor(sqlSession, args);
         } else {
+          //2.4.5返回的是对象，转换参数
+          /**
+           * MapperMethod方法的convertArgsToSqlCommandParam方法主要作用：
+           * 1.假设Mapper接口中有一个接口
+           *     TCustomerConfig query(@Param("id") Long id);
+           * 2.那么这个方法的作用就是返回一个Map
+           * 3.Map的内容为[{"param1":1},{"id":1}]，每一个参数都会生成两个key和value，这样取值的时候可以通过参数名获取，也可以通过param1的方式获取
+           */
           Object param = method.convertArgsToSqlCommandParam(args);
+          //2.4.6执行
           result = sqlSession.selectOne(command.getName(), param);
+
           if (method.returnsOptional()
               && (result == null || !method.getReturnType().equals(result.getClass()))) {
             result = Optional.ofNullable(result);
@@ -97,6 +125,7 @@ public class MapperMethod {
       default:
         throw new BindingException("Unknown execution method for: " + command.getName());
     }
+    //如果方法的返回值为基本类型，而返回值却为 null，此种情况下应抛出异常
     if (result == null && method.getReturnType().isPrimitive() && !method.returnsVoid()) {
       throw new BindingException("Mapper method '" + command.getName()
           + " attempted to return null from a method with a primitive return type (" + method.getReturnType() + ").");
@@ -222,8 +251,11 @@ public class MapperMethod {
     private final SqlCommandType type;
 
     public SqlCommand(Configuration configuration, Class<?> mapperInterface, Method method) {
+      //1.获取方法名
       final String methodName = method.getName();
+      //2.获取类的对象
       final Class<?> declaringClass = method.getDeclaringClass();
+      //3.获取当前sql的MapperStatement对象
       MappedStatement ms = resolveMappedStatement(mapperInterface, methodName, declaringClass,
           configuration);
       if (ms == null) {
@@ -235,6 +267,7 @@ public class MapperMethod {
               + mapperInterface.getName() + "." + methodName);
         }
       } else {
+        //4.name为MappedStatement的Id属性，type为当前sql语句的类别
         name = ms.getId();
         type = ms.getSqlCommandType();
         if (type == SqlCommandType.UNKNOWN) {
@@ -253,7 +286,9 @@ public class MapperMethod {
 
     private MappedStatement resolveMappedStatement(Class<?> mapperInterface, String methodName,
         Class<?> declaringClass, Configuration configuration) {
+      //1.拼装statementId，为接口名+方法名
       String statementId = mapperInterface.getName() + "." + methodName;
+      //2.从confuguration的mappedStatements属性中通过Key获取MqpperStatement对象
       if (configuration.hasStatement(statementId)) {
         return configuration.getMappedStatement(statementId);
       } else if (mapperInterface.equals(declaringClass)) {
@@ -286,6 +321,7 @@ public class MapperMethod {
     private final ParamNameResolver paramNameResolver;
 
     public MethodSignature(Configuration configuration, Class<?> mapperInterface, Method method) {
+      //1.获取接口的返回值类型
       Type resolvedReturnType = TypeParameterResolver.resolveReturnType(method, mapperInterface);
       if (resolvedReturnType instanceof Class<?>) {
         this.returnType = (Class<?>) resolvedReturnType;
@@ -294,14 +330,21 @@ public class MapperMethod {
       } else {
         this.returnType = method.getReturnType();
       }
+      //2.接口返回值是否是void
       this.returnsVoid = void.class.equals(this.returnType);
+      //3.接口返回值是否是数组/集合
       this.returnsMany = configuration.getObjectFactory().isCollection(this.returnType) || this.returnType.isArray();
+      //4.接口返回值否是是游标
       this.returnsCursor = Cursor.class.equals(this.returnType);
       this.returnsOptional = Optional.class.equals(this.returnType);
+      //5.解析MqpperKey注解的方法
       this.mapKey = getMapKey(method);
       this.returnsMap = this.mapKey != null;
+      //6.获取 RowBounds 参数在参数列表中的位置，如果参数列表中包含多个 RowBounds 参数，此方法会抛出异常
       this.rowBoundsIndex = getUniqueParamIndex(method, RowBounds.class);
+      //7.获取 ResultHandler 参数在参数列表中的位置
       this.resultHandlerIndex = getUniqueParamIndex(method, ResultHandler.class);
+      //8.解析参数列表
       this.paramNameResolver = new ParamNameResolver(configuration, method);
     }
 

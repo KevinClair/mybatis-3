@@ -15,6 +15,9 @@
  */
 package org.apache.ibatis.binding;
 
+import org.apache.ibatis.reflection.ExceptionUtil;
+import org.apache.ibatis.session.SqlSession;
+
 import java.io.Serializable;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodHandles.Lookup;
@@ -23,9 +26,6 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.util.Map;
-
-import org.apache.ibatis.reflection.ExceptionUtil;
-import org.apache.ibatis.session.SqlSession;
 
 /**
  * @author Clinton Begin
@@ -75,6 +75,7 @@ public class MapperProxy<T> implements InvocationHandler, Serializable {
   }
 
   @Override
+  //mybatis执行增删改查的流程，动态代理执行
   public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
     try {
       if (Object.class.equals(method.getDeclaringClass())) {
@@ -89,11 +90,14 @@ public class MapperProxy<T> implements InvocationHandler, Serializable {
     } catch (Throwable t) {
       throw ExceptionUtil.unwrapThrowable(t);
     }
+    //1.创建MapperMethod
     final MapperMethod mapperMethod = cachedMapperMethod(method);
+    //2.开始执行
     return mapperMethod.execute(sqlSession, args);
   }
 
   private MapperMethod cachedMapperMethod(Method method) {
+    //1.初始化MqpperMethod
     return methodCache.computeIfAbsent(method,
         k -> new MapperMethod(mapperInterface, method, sqlSession.getConfiguration()));
   }
